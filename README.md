@@ -1,4 +1,4 @@
-## Projektidee
+## Projektidee (final_version_bachlorarbeit.py)
 
 Dieses Projekt implementiert eine zweistufige Deep-Learning-Pipeline zur Bewertung der Prognosestabilität.
 
