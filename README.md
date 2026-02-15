@@ -7,45 +7,45 @@ Das Skript ist bewusst in klar markierte Blöcke gegliedert:
   `# ===============================`  
   Importiert alle benötigten Bibliotheken (NumPy, Pandas, TensorFlow/Keras, Optuna, Scikit-Learn, SciPy).
 
-- `# ======================================================`
+- `# ========================`
   `# CONFIG`
-  `# ======================================================`  
+  `# ================================`  
   Zentrale Konfiguration: Datenpfad, Output-Ordner, Seed, Fensterlänge, Splits, Optuna-Budgets, Metriken, Parallelität und GPU-Setup.
 
-- `# ======================================================`
+- `# ========================`
   `# OPTUNA HELPERS`
-  `# ======================================================`  
+  `# =================================`  
   Hilfsfunktionen zum Speichern von Optuna-Trials (`save_optuna_trials`) und zum einheitlichen Protokollieren der besten Parameter (`pack_best_row`).
 
-- `# ======================================================`
+- `# ========================`
   `# LSTM1 (per country)`
-  `# ======================================================`  
+  `# ================================`  
   Definiert und trainiert das Prognosemodell **LSTM1 pro Land**.
 
-- `# ======================================================`
+- `# =================`
   `# CHANGE REQUESTED: LSTM1 Optuna uses Pareto (multi-objective)`
   `# Objectives: MAE, sMAPE, MASE (on normalized target y)`
-  `# ======================================================`  
+  `# ======================================`  
   Optuna optimiert LSTM1 **multi-objektiv** (MAE, sMAPE, MASE). Aus der Pareto-Front wird per **Distance-to-Ideal** ein Kompromissmodell gewählt.
 
-- `# ======================================================`
+- `# ========================`
   `# META MODELS (base architectures)`
-  `# ======================================================`  
+  `# ================================`  
   Definiert die globalen Meta-Architekturen, die pro Fenster die erwarteten Fehler vorhersagen.
 
-- `# ======================================================`
+- `# ==================`
   `# RESIDUAL-LSTM = SAME STYLE AS META_LSTM`
   `# Target residual = y_true - base_prediction`
-  `# ======================================================`  
+  `# ========================================`  
   Residual-Modelle werden im **gleichen Stil wie META_LSTM** trainiert. Ziel ist das Residuum:
   `residual = y_true - base_prediction`.
 
 - `# ==========================LOAD DATA============================`  
   Laden und Vorverarbeitung der CSV-Daten, Feature-Auswahl, Sortierung nach Datum, Extraktion der Länder.
 
-- `# ======================================================`
+- `# ========================`
   `# STORAGE / POOLS`
-  `# ======================================================`  
+  `# ========================================`  
   Sammelstrukturen (Pools) für globale Meta-Trainingsdaten: Sequenzen, Statistiken, Targets pro Metrik sowie Splits pro Land.
 
 ---
