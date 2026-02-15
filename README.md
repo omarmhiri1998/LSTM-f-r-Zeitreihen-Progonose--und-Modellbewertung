@@ -160,8 +160,7 @@ Implementierte Architekturen:
 2. `META_LSTM_STAT` (Sequenz + statische Fenster-Features)
 3. `META_ATT` (LSTM + Attention)
 4. `META_ATT_BILSTM` (BiLSTM + Attention)
-5. `META_ATT_RESID` (ATT-Basis + Residual-LSTM-Korrektur)
-6. `META_ATT_BILSTM_RESID` (ATT-BiLSTM-Basis + Residual-LSTM-Korrektur)
+5. `META_ATT_BILSTM_RESID` (ATT-BiLSTM-Basis + Residual-LSTM-Korrektur)
 
 **Residual Variants (Base + LSTM Residual)**  
 `# ============================Residual Variants (Base + LSTM Residual)==========================`
