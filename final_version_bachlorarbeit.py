@@ -73,12 +73,12 @@ SAVE_OPTUNA_TRIALS = True
 SEASONAL_PERIOD = 365
 
 # Parallel processing settings
-MAX_WORKERS = 4  # 4 بلدان في نفس الوقت على GPU واحد
-USE_THREADS = True  # استخدام threads بدلاً من processes لتجنب مشاكل TensorFlow مع GPU
+MAX_WORKERS =4 
+USE_THREADS = True  
 
-# إعدادات GPU لتفادي مشاكل الذاكرة
+
 def setup_gpu_memory():
-    """إعداد GPU لتجنب مشاكل الذاكرة عند التشغيل المتوازي"""
+    
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:
         try:
@@ -1100,4 +1100,5 @@ except Exception as e:
 print(f"\n=== ALL DONE ✓ V13 (LSTM1 + 6 Meta Models, WINDOW fixed) ===")
 print(f"=== Parallel processing: {MAX_WORKERS} countries/models at a time ===")
 print(f"=== Total countries processed: {len(splits)} ===")
+
 
