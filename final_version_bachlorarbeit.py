@@ -41,42 +41,72 @@ from tensorflow.keras.regularizers import l2
 # ======================================================
 # CONFIG
 # ======================================================
+
+# Pfad zur Eingabe-CSV-Datei (muss mindestens country, Date, tavg enthalten)
 DATA_PATH = "daily_weather_formatted_Date (1).csv"
+
+# Ausgabeordner für alle Ergebnisse (CSV-Dateien, Plots, Optuna-Logs)
 OUT_DIR = "plots_v13_all_models_fixed46_bilstm_residlstm"
 os.makedirs(OUT_DIR, exist_ok=True)
 
+# Reproduzierbarkeit durch festen Zufalls-Seed
 SEED = 42
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
 
+# Feste Fensterlänge (Anzahl vergangener Zeitschritte pro Sample)
 WINDOW = 180  # FIXED as requested
 
-# Window splits (on windows)
+# ------------------------------------------------------
+# Window-Splits (bezogen auf erzeugte Fenster, nicht Rohdaten)
+# ------------------------------------------------------
+# 0–35%   → Training LSTM1
+# 35–50%  → interne Validierung / Diagnose
+# 35–75%  → Training Meta-Modelle
+# 75–90%  → Holdout-Bereich
+# 90–100% → Finale Evaluation
 P35 = 0.35
 P50 = 0.50
 P75 = 0.75
 P90 = 0.90
 
+# Fehlermetriken, die von den Meta-Modellen vorhergesagt werden
 META_METRICS = ["sMAPE", "MAE", "MASE"]
 
-# Budgets
+# ------------------------------------------------------
+# Optuna-Budgets
+# ------------------------------------------------------
+# Anzahl Trials und maximale Epochen für LSTM1 (Stufe 1)
 N_TRIALS_L1 = 20
 L1_MAX_EPOCHS = 50
 
+# Anzahl Trials und maximale Epochen für Meta-Modelle (Stufe 2)
 N_TRIALS_META = 20
 META_MAX_EPOCHS = 50
 
-# Save Optuna trials CSV
+# Speichern aller Optuna-Trials als CSV aktivieren/deaktivieren
 SAVE_OPTUNA_TRIALS = True
 
-# --- ONLY CHANGE #1 (Seasonal MASE period) ---
+# ------------------------------------------------------
+# Saisonale Periode für MASE-Berechnung
+# ------------------------------------------------------
+# z.B. 365 für tägliche Daten mit jährlicher Saisonalität
 SEASONAL_PERIOD = 365
 
-# Parallel processing settings
-MAX_WORKERS =4 
+# ------------------------------------------------------
+# Parallelisierungseinstellungen
+# ------------------------------------------------------
+# Maximale Anzahl paralleler Worker (Länder / Modelle)
+MAX_WORKERS = 4
+
+# Nutzung von Threads (empfohlen bei GPU + TensorFlow)
 USE_THREADS = True  
 
 
+# ------------------------------------------------------
+# GPU-Speicherkonfiguration
+# ------------------------------------------------------
+# Aktiviert Memory Growth, damit TensorFlow nicht den gesamten GPU-Speicher blockiert
 def setup_gpu_memory():
     
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -93,15 +123,25 @@ def setup_gpu_memory():
 
 setup_gpu_memory()
 
+
 # ======================================================
 # METRICS
 # ======================================================
+
+# ------------------------------------------------------
+# sMAPE (Symmetric Mean Absolute Percentage Error)
+# ------------------------------------------------------
+# Wird sowohl als Evaluationsmetrik als auch als Meta-Target genutzt
 def smape_scalar(y_true, y_pred):
     y_true = float(y_true)
     y_pred = float(y_pred)
     return float(2.0 * abs(y_pred - y_true) / (abs(y_true) + abs(y_pred) + 1e-8))
 
-# --- ONLY CHANGE #2: seasonal baseline for MASE ---
+
+# ------------------------------------------------------
+# MASE (Mean Absolute Scaled Error)
+# ------------------------------------------------------
+# Skaliert den Fehler anhand einer saisonalen Naiv-Baseline
 def mase_scalar(y_true, y_pred, y_train):
     y_train = np.asarray(y_train, dtype=float)
     if len(y_train) <= SEASONAL_PERIOD:
@@ -111,9 +151,19 @@ def mase_scalar(y_true, y_pred, y_train):
         denom = np.mean(diffs) + 1e-8
     return float(abs(float(y_true) - float(y_pred)) / denom)
 
+
+# ------------------------------------------------------
+# Skill-Score basierend auf MAE
+# ------------------------------------------------------
+# Misst die Verbesserung gegenüber der Global-Constant-Baseline
 def skill_score_mae(mae_model, mae_baseline):
     return float(1.0 - (mae_model / (mae_baseline + 1e-8)))
 
+
+# ------------------------------------------------------
+# Sichere Spearman-Korrelation
+# ------------------------------------------------------
+# Verhindert Abstürze bei sehr kleinen oder degenerierten Stichproben
 def safe_spearman(y, p):
     y = np.asarray(y, dtype=float)
     p = np.asarray(p, dtype=float)
@@ -131,6 +181,13 @@ def safe_spearman(y, p):
 # ======================================================
 # OPTUNA HELPERS
 # ======================================================
+
+# ------------------------------------------------------
+# Speichert alle Optuna-Trials als CSV-Datei
+# ------------------------------------------------------
+# study  : Optuna-Study-Objekt
+# fname  : Dateiname für den Export
+# Wird nur ausgeführt, wenn SAVE_OPTUNA_TRIALS = True
 def save_optuna_trials(study, fname):
     if not SAVE_OPTUNA_TRIALS:
         return
@@ -140,6 +197,15 @@ def save_optuna_trials(study, fname):
     except Exception as e:
         print(" [warn] Could not save optuna trials:", fname, "->", str(e))
 
+
+# ------------------------------------------------------
+# Verpackt die besten Hyperparameter in ein einheitliches Dict-Format
+# ------------------------------------------------------
+# stage        : Modellname / Phase (z.B. LSTM1, META_ATT, etc.)
+# metric       : Zielmetrik (sMAPE, MAE, MASE)
+# best_value   : Bester Validierungswert
+# best_params  : Hyperparameter-Dictionary von Optuna
+# extra        : Optional zusätzliche Informationen (z.B. WINDOW)
 def pack_best_row(stage, metric, best_value, best_params, extra=None):
     row = {
         "Stage": stage,
@@ -152,9 +218,23 @@ def pack_best_row(stage, metric, best_value, best_params, extra=None):
             row[k] = v
     return row
 
+
 # ======================================================
-# LSTM1 (per country) 
+# LSTM1 (per country)
 # ======================================================
+
+# ------------------------------------------------------
+# Baut das LSTM1-Prognosemodell
+# ------------------------------------------------------
+# trial      : Optuna-Trial (liefert Hyperparameter)
+# window     : Fensterlänge (Anzahl Zeitschritte)
+# input_dim  : Anzahl Features pro Zeitschritt
+#
+# Architektur:
+# - LSTM
+# - Dropout
+# - Dense (ReLU)
+# - Output Dense (Regression)
 def build_lstm1(trial, window, input_dim):
     units = trial.suggest_int("units_l1", 32, 128)
     lr = trial.suggest_float("lr_l1", 1e-4, 1e-2, log=True)
@@ -177,21 +257,36 @@ def build_lstm1(trial, window, input_dim):
         layers.Dense(64, activation="relu", kernel_regularizer=l2(l2_reg)),
         layers.Dense(1, kernel_regularizer=l2(l2_reg))
     ])
+
     model.compile(optimizer=Adam(lr), loss="mse")
     return model, patience
+
 
 # ======================================================
 # CHANGE REQUESTED: LSTM1 Optuna uses Pareto (multi-objective)
 # Objectives: MAE, sMAPE, MASE (on normalized target y)
 # ======================================================
+
+# ------------------------------------------------------
+# Multi-Objective-Optimierungsfunktion für LSTM1
+# ------------------------------------------------------
+# Optimiert gleichzeitig:
+# - MAE
+# - sMAPE
+# - MASE
+#
+# Rückgabe: Tupel (mae, smape, mase)
+# → Optuna erzeugt daraus eine Pareto-Front
 def objective_lstm1(trial, X, y, window):
     m, patience = build_lstm1(trial, window, X.shape[2])
+
     early_stopping = EarlyStopping(
         monitor='val_loss',
         patience=patience,
         restore_best_weights=True,
         verbose=0
     )
+
     history = m.fit(
         X, y,
         epochs=L1_MAX_EPOCHS,
@@ -200,32 +295,84 @@ def objective_lstm1(trial, X, y, window):
         callbacks=[early_stopping],
         verbose=0
     )
+
+    # Speichert die effektive Anzahl trainierter Epochen
     trial.set_user_attr("effective_epochs", len(history.history['loss']))
+
     pred = m.predict(X, verbose=0).flatten()
 
+    # MAE
     mae = mean_absolute_error(y, pred)
+
+    # sMAPE
     smape = float(np.mean([smape_scalar(y[i], pred[i]) for i in range(len(y))]))
 
+    # MASE (hier skaliert mit einfacher Differenz-Baseline auf normiertem y)
     denom = float(np.mean(np.abs(np.diff(y))) + 1e-8)
     mase = float(np.mean(np.abs(y - pred) / denom))
 
     return mae, smape, mase
 
+
 # ======================================================
 # META MODELS (base architectures) 
 # ======================================================
-# 1) META LSTM (seq)
+# ======================================================
+# 1) META_LSTM (nur Sequenzmodell)
+# ======================================================
+# Dieses Modell dient als Basis-Meta-Architektur.
+#
+# Ziel:
+# Vorhersage der erwarteten Prognosefehlerhöhe
+# (z.B. sMAPE, MAE oder MASE) ausschließlich
+# basierend auf einem historischen Eingabefenster.
+#
+# Struktur:
+# LSTM → Dropout → Dense(ReLU) → Dense(1)
+#
+# Keine Attention.
+# Keine statischen Zusatzfeatures.
+# Reines Sequenzmodell.
+
+
 def build_meta_lstm(trial, window):
+
+    # --------------------------------------------------
+    # Hyperparameter-Suche mit Optuna
+    # --------------------------------------------------
+
+    # Anzahl der LSTM-Neuronen (Modellkapazität)
     units = trial.suggest_int("meta_lstm_units", 32, 128)
+
+    # Größe der Dense-Zwischenschicht
     dense_units = trial.suggest_int("meta_lstm_dense", 16, 64)
+
+    # Lernrate (logarithmisch gesucht)
     lr = trial.suggest_float("meta_lstm_lr", 1e-4, 1e-2, log=True)
+
+    # Geduld für Early Stopping
     patience = trial.suggest_int("meta_lstm_patience", 3, 10)
 
+    # Dropout zur Regularisierung
     dropout = trial.suggest_float("meta_lstm_dropout", 0.0, 0.5)
+
+    # Recurrent Dropout (auf rekurrente Verbindungen)
     recurrent_dropout = trial.suggest_float("meta_lstm_recurrent_dropout", 0.0, 0.5)
+
+    # L2-Regularisierung gegen Overfitting
     l2_reg = trial.suggest_float("meta_lstm_l2_reg", 1e-6, 1e-2, log=True)
 
+
+    # --------------------------------------------------
+    # Modellarchitektur
+    # --------------------------------------------------
+
+    # Eingabe: (Fensterlänge, 1 Feature)
     inp = layers.Input(shape=(window, 1))
+
+    # LSTM extrahiert zeitliche Muster
+    # return_sequences=False (Standard),
+    # da nur Endzustand verwendet wird
     x = layers.LSTM(
         units,
         dropout=dropout,
@@ -233,22 +380,59 @@ def build_meta_lstm(trial, window):
         kernel_regularizer=l2(l2_reg),
         recurrent_regularizer=l2(l2_reg)
     )(inp)
-    x = layers.Dropout(dropout)(x)
-    x = layers.Dense(dense_units, activation="relu", kernel_regularizer=l2(l2_reg))(x)
-    out = layers.Dense(1, kernel_regularizer=l2(l2_reg))(x)
 
+    # Zusätzliche Regularisierung nach LSTM
+    x = layers.Dropout(dropout)(x)
+
+    # Nichtlineare Projektion
+    x = layers.Dense(
+        dense_units,
+        activation="relu",
+        kernel_regularizer=l2(l2_reg)
+    )(x)
+
+    # Lineare Regressionsausgabe
+    # Ziel: kontinuierlicher Fehlerwert
+    out = layers.Dense(
+        1,
+        kernel_regularizer=l2(l2_reg)
+    )(x)
+
+    # Modellobjekt erzeugen
     m = Model(inp, out)
-    m.compile(optimizer=Adam(lr), loss="mse")
+
+    # Optimierung mit Adam
+    # Verlustfunktion: MSE
+    m.compile(
+        optimizer=Adam(lr),
+        loss="mse"
+    )
+
     return m, patience
 
+
+
+# ======================================================
+# Optuna-Objective für META_LSTM
+# ======================================================
+# Trainiert das Modell auf gepoolten Fenstern
+# (35–75%) und gibt MAE als Optimierungsziel zurück.
+
+
 def objective_meta_lstm(trial, Xs, y, window):
+
+    # Modell auf Basis der Trial-Hyperparameter erzeugen
     m, patience = build_meta_lstm(trial, window)
+
+    # Early Stopping zur Vermeidung von Overfitting
     early_stopping = EarlyStopping(
         monitor='val_loss',
         patience=patience,
         restore_best_weights=True,
         verbose=0
     )
+
+    # Training mit 20% interner Validierung
     history = m.fit(
         Xs, y,
         epochs=META_MAX_EPOCHS,
@@ -257,25 +441,117 @@ def objective_meta_lstm(trial, Xs, y, window):
         callbacks=[early_stopping],
         verbose=0
     )
-    trial.set_user_attr("effective_epochs", len(history.history['loss']))
+
+    # Speichern der tatsächlich verwendeten Epochen
+    trial.set_user_attr(
+        "effective_epochs",
+        len(history.history['loss'])
+    )
+
+    # Vorhersage auf Trainingsdaten
     pred = m.predict(Xs, verbose=0).flatten()
+
+    # Optimierungsziel:
+    # Minimierung des mittleren absoluten Fehlers
     return mean_absolute_error(y, pred)
-#2) META LSTM + STAT (seq + window stats)
-   # -------WINDOW STATISTICS (statische Eigenschaften)-----
+
+# ======================================================
+# 2) META_LSTM + STAT
+# ======================================================
+# Erweiterte Meta-Architektur:
+# Kombination aus Sequenzinformation (LSTM)
+# und statischen Fenstermerkmalen.
+#
+# Idee:
+# Reines LSTM sieht nur die zeitliche Dynamik.
+# Durch zusätzliche statistische Kennzahlen
+# erhält das Modell explizite Strukturinformationen
+# über Niveau, Streuung, Schiefe, Trend usw.
+#
+# Architektur:
+#   Sequenzzweig: LSTM → Dropout
+#   Statistikzweig: Dense(32)
+#   Fusion: Concatenate → Dense → Output
+#
+# Ziel:
+# Verbesserung der Fehlervorhersage durch
+# Kombination impliziter und expliziter Merkmale.
+# ======================================================
+
+
+
+# ------------------------------------------------------
+# Berechnung statischer Fenstermerkmale
+# ------------------------------------------------------
+# Diese Funktion extrahiert feste statistische Kennzahlen
+# aus einem Eingabefenster.
+#
+# Diese Features repräsentieren:
+# - Lage (mean)
+# - Streuung (std)
+# - Extremwerte (min, max)
+# - Trend (Differenz letzter − erster Wert)
+# - Form der Verteilung (Schiefe, Kurtosis)
+# - Robustmaß für Streuung (IQR)
+#
+# Ausgabe:
+# Vektor fester Länge (stats_dim)
+# ------------------------------------------------------
+
 def window_stats(arr):
+
+    # Sicherstellen, dass numerisches Array verwendet wird
     arr = np.array(arr, dtype=float)
+
     return np.array([
+
+        # Mittelwert (Niveau des Fensters)
         np.mean(arr),
+
+        # Standardabweichung (Volatilität)
         np.std(arr),
+
+        # Minimum im Fenster
         np.min(arr),
+
+        # Maximum im Fenster
         np.max(arr),
-        arr[-1] - arr[0],             # trend
+
+        # Einfacher Trendindikator
+        # Differenz letzter minus erster Wert
+        arr[-1] - arr[0],
+
+        # Schiefe der Verteilung
         skew(arr),
+
+        # Kurtosis (Wölbung)
         kurtosis(arr),
-        np.percentile(arr, 75) - np.percentile(arr, 25)  # IQR
+
+        # Interquartilsabstand (robustes Streuungsmaß)
+        np.percentile(arr, 75) - np.percentile(arr, 25)
+
     ], dtype=float)
-  # --------------------META LSTM + STAT-----
+
+
+
+# ------------------------------------------------------
+# Modellaufbau: META_LSTM_STAT
+# ------------------------------------------------------
+# Zwei Eingaben:
+#   1) Sequenzinput (window × 1)
+#   2) Statistikinput (stats_dim)
+#
+# Ziel:
+# Fusion beider Informationsquellen
+# zur präziseren Fehlerschätzung
+# ------------------------------------------------------
+
 def build_meta_lstm_stat(trial, window, stats_dim):
+
+    # ------------------------------
+    # Hyperparameter-Suche
+    # ------------------------------
+
     units = trial.suggest_int("meta_lstm_stat_units", 32, 128)
     dense_units = trial.suggest_int("meta_lstm_stat_dense", 16, 64)
     lr = trial.suggest_float("meta_lstm_stat_lr", 1e-4, 1e-2, log=True)
@@ -285,8 +561,15 @@ def build_meta_lstm_stat(trial, window, stats_dim):
     recurrent_dropout = trial.suggest_float("meta_lstm_stat_recurrent_dropout", 0.0, 0.5)
     l2_reg = trial.suggest_float("meta_lstm_stat_l2_reg", 1e-6, 1e-2, log=True)
 
-    seq_in = layers.Input(shape=(window, 1), name="seq_in")
-    stat_in = layers.Input(shape=(stats_dim,), name="stat_in")
+
+    # ------------------------------
+    # Sequenzzweig
+    # ------------------------------
+
+    seq_in = layers.Input(
+        shape=(window, 1),
+        name="seq_in"
+    )
 
     x = layers.LSTM(
         units,
@@ -295,58 +578,205 @@ def build_meta_lstm_stat(trial, window, stats_dim):
         kernel_regularizer=l2(l2_reg),
         recurrent_regularizer=l2(l2_reg)
     )(seq_in)
+
     x = layers.Dropout(dropout)(x)
 
-    z = layers.Dense(32, activation="relu", kernel_regularizer=l2(l2_reg))(stat_in)
+
+    # ------------------------------
+    # Statistikzweig
+    # ------------------------------
+
+    stat_in = layers.Input(
+        shape=(stats_dim,),
+        name="stat_in"
+    )
+
+    # Projektion der statistischen Merkmale
+    z = layers.Dense(
+        32,
+        activation="relu",
+        kernel_regularizer=l2(l2_reg)
+    )(stat_in)
+
+
+    # ------------------------------
+    # Fusion beider Zweige
+    # ------------------------------
+
     h = layers.Concatenate()([x, z])
-    h = layers.Dense(dense_units, activation="relu", kernel_regularizer=l2(l2_reg))(h)
-    out = layers.Dense(1, kernel_regularizer=l2(l2_reg))(h)
+
+    h = layers.Dense(
+        dense_units,
+        activation="relu",
+        kernel_regularizer=l2(l2_reg)
+    )(h)
+
+    # Regressionsausgabe (Fehlerwert)
+    out = layers.Dense(
+        1,
+        kernel_regularizer=l2(l2_reg)
+    )(h)
+
+
+    # ------------------------------
+    # Modellkompilierung
+    # ------------------------------
 
     m = Model([seq_in, stat_in], out)
-    m.compile(optimizer=Adam(lr), loss="mse")
+
+    m.compile(
+        optimizer=Adam(lr),
+        loss="mse"
+    )
+
     return m, patience
 
+
+
+# ------------------------------------------------------
+# Optuna-Objective für META_LSTM_STAT
+# ------------------------------------------------------
+# Trainiert das kombinierte Modell
+# auf gepoolten Fenstern (35–75%)
+# und minimiert den MAE.
+# ------------------------------------------------------
+
 def objective_meta_lstm_stat(trial, Xs_seq, Xs_stat, y, window, stats_dim):
+
+    # Modell anhand Trial-Hyperparameter erzeugen
     m, patience = build_meta_lstm_stat(trial, window, stats_dim)
+
+    # Early Stopping
     early_stopping = EarlyStopping(
         monitor='val_loss',
         patience=patience,
         restore_best_weights=True,
         verbose=0
     )
+
+    # Training mit interner Validierung
     history = m.fit(
-        [Xs_seq, Xs_stat], y,
+        [Xs_seq, Xs_stat],
+        y,
         epochs=META_MAX_EPOCHS,
         batch_size=32,
         validation_split=0.2,
         callbacks=[early_stopping],
         verbose=0
     )
-    trial.set_user_attr("effective_epochs", len(history.history['loss']))
-    pred = m.predict([Xs_seq, Xs_stat], verbose=0).flatten()
+
+    # Dokumentation der effektiven Epochenzahl
+    trial.set_user_attr(
+        "effective_epochs",
+        len(history.history['loss'])
+    )
+
+    # Vorhersage
+    pred = m.predict(
+        [Xs_seq, Xs_stat],
+        verbose=0
+    ).flatten()
+
+    # Optimierungsziel: MAE minimieren
     return mean_absolute_error(y, pred)
 
-# 3) META ATT (seq + attention)
-#----------ATTENTION LAYER--------
+
+# ======================================================
+# 3) META_ATT (Sequenz + Attention)
+# ======================================================
+# Motivation:
+# Ein reines LSTM komprimiert die gesamte Sequenz
+# in einen einzigen versteckten Zustand.
+# Dabei gehen Informationen darüber verloren,
+# welche Zeitpunkte im Fenster besonders wichtig waren.
+#
+# Die Attention-Mechanismus löst dieses Problem,
+# indem er lernbare Gewichte über alle Zeitpunkte verteilt.
+#
+# Vorteil:
+# Das Modell lernt explizit,
+# welche Teile des Fensters für die Fehlerschätzung
+# besonders relevant sind.
+# ======================================================
+
+
+
+# ------------------------------------------------------
+# Attention Layer
+# ------------------------------------------------------
+# Diese Klasse implementiert eine einfache additive
+# Attention-Mechanik über die Zeitdimension.
+#
+# Eingabe:
+#   Tensor der Form (Batch, TimeSteps, Features)
+#
+# Ablauf:
+#   1) Lineare Projektion jedes Zeitschritts
+#   2) Nichtlineare Transformation (tanh)
+#   3) Softmax-Normalisierung über Zeit
+#   4) Gewichtete Summation
+#
+# Ausgabe:
+#   Kontextvektor (Batch, Features)
+# ------------------------------------------------------
+
 class Attention(layers.Layer):
+
     def build(self, input_shape):
+
+        # Gewichtsmatrix für Feature-Projektion
         self.W = self.add_weight(
             shape=(input_shape[-1], 1),
             initializer="normal",
             trainable=True
         )
+
+        # Bias pro Zeitschritt
         self.b = self.add_weight(
             shape=(input_shape[1], 1),
             initializer="zeros",
             trainable=True
         )
 
+
     def call(self, x):
+
+        # Lineare Projektion
         score = tf.matmul(x, self.W) + self.b
-        w = tf.nn.softmax(tf.nn.tanh(score), axis=1)
-        return tf.reduce_sum(x * w, axis=1)
-#----------------META ATT-----------
+
+        # Nichtlineare Aktivierung
+        score = tf.nn.tanh(score)
+
+        # Softmax über Zeitdimension
+        w = tf.nn.softmax(score, axis=1)
+
+        # Gewichtete Aggregation
+        context = tf.reduce_sum(x * w, axis=1)
+
+        return context
+
+
+
+# ------------------------------------------------------
+# Modellaufbau: META_ATT
+# ------------------------------------------------------
+# Architektur:
+#   LSTM (return_sequences=True)
+#   → Attention
+#   → Dense
+#   → Output
+#
+# Ziel:
+# Relevante Zeitpunkte im Fenster
+# explizit gewichten.
+# ------------------------------------------------------
+
 def build_meta_att(trial, window):
+
+    # ------------------------------
+    # Hyperparameter-Suche
+    # ------------------------------
+
     units = trial.suggest_int("meta_att_units", 32, 128)
     dense_units = trial.suggest_int("meta_att_dense", 16, 64)
     lr = trial.suggest_float("meta_att_lr", 1e-4, 1e-2, log=True)
@@ -356,7 +786,20 @@ def build_meta_att(trial, window):
     recurrent_dropout = trial.suggest_float("meta_att_recurrent_dropout", 0.0, 0.5)
     l2_reg = trial.suggest_float("meta_att_l2_reg", 1e-6, 1e-2, log=True)
 
+
+    # ------------------------------
+    # Eingabeschicht
+    # ------------------------------
+
     seq_in = layers.Input(shape=(window, 1))
+
+
+    # ------------------------------
+    # LSTM mit Sequenzrückgabe
+    # ------------------------------
+    # return_sequences=True ist notwendig,
+    # damit Attention Zugriff auf alle Zeitschritte erhält.
+
     x = layers.LSTM(
         units,
         return_sequences=True,
@@ -365,37 +808,118 @@ def build_meta_att(trial, window):
         kernel_regularizer=l2(l2_reg),
         recurrent_regularizer=l2(l2_reg)
     )(seq_in)
+
+
+    # ------------------------------
+    # Attention
+    # ------------------------------
+
     x = Attention()(x)
+
+
+    # ------------------------------
+    # Dense-Projektion
+    # ------------------------------
+
     x = layers.Dropout(dropout)(x)
-    x = layers.Dense(dense_units, activation="relu", kernel_regularizer=l2(l2_reg))(x)
-    out = layers.Dense(1, kernel_regularizer=l2(l2_reg))(x)
+
+    x = layers.Dense(
+        dense_units,
+        activation="relu",
+        kernel_regularizer=l2(l2_reg)
+    )(x)
+
+
+    # Regressionsausgabe
+    out = layers.Dense(
+        1,
+        kernel_regularizer=l2(l2_reg)
+    )(x)
+
+
+    # ------------------------------
+    # Modellkompilierung
+    # ------------------------------
 
     m = Model(seq_in, out)
-    m.compile(optimizer=Adam(lr), loss="mse")
+
+    m.compile(
+        optimizer=Adam(lr),
+        loss="mse"
+    )
+
     return m, patience
 
+
+
+# ------------------------------------------------------
+# Optuna-Objective für META_ATT
+# ------------------------------------------------------
+# Trainiert das Modell
+# und minimiert den MAE.
+# ------------------------------------------------------
+
 def objective_meta_att(trial, Xs, y, window):
+
     m, patience = build_meta_att(trial, window)
+
     early_stopping = EarlyStopping(
         monitor='val_loss',
         patience=patience,
         restore_best_weights=True,
         verbose=0
     )
+
     history = m.fit(
-        Xs, y,
+        Xs,
+        y,
         epochs=META_MAX_EPOCHS,
         batch_size=32,
         validation_split=0.2,
         callbacks=[early_stopping],
         verbose=0
     )
-    trial.set_user_attr("effective_epochs", len(history.history['loss']))
+
+    trial.set_user_attr(
+        "effective_epochs",
+        len(history.history['loss'])
+    )
+
     pred = m.predict(Xs, verbose=0).flatten()
+
     return mean_absolute_error(y, pred)
 
-# 4) META ATT-BiLSTM (seq + attention + bidirectional)
+
+
+# ======================================================
+# 4) META_ATT_BILSTM
+# ======================================================
+# Erweiterung des Attention-Modells
+# durch bidirektionale Verarbeitung.
+#
+# Motivation:
+# Fehlerstrukturen können sowohl von
+# frühen als auch späten Sequenzanteilen abhängen.
+#
+# Bidirectional-LSTM verarbeitet:
+#   → Vorwärtsrichtung
+#   → Rückwärtsrichtung
+#
+# Dadurch erhält Attention einen reicheren Kontext.
+# ======================================================
+
+
+
+# ------------------------------------------------------
+# Modellaufbau: META_ATT_BILSTM
+# ------------------------------------------------------
+
 def build_meta_att_bilstm(trial, window):
+
+    # ------------------------------
+    # Hyperparameter
+    # ------------------------------
+
     units = trial.suggest_int("meta_att_bilstm_units", 32, 128)
     dense_units = trial.suggest_int("meta_att_bilstm_dense", 16, 64)
     lr = trial.suggest_float("meta_att_bilstm_lr", 1e-4, 1e-2, log=True)
@@ -405,7 +929,18 @@ def build_meta_att_bilstm(trial, window):
     recurrent_dropout = trial.suggest_float("meta_att_bilstm_recurrent_dropout", 0.0, 0.5)
     l2_reg = trial.suggest_float("meta_att_bilstm_l2_reg", 1e-6, 1e-2, log=True)
 
+
+    # ------------------------------
+    # Eingabe
+    # ------------------------------
+
     seq_in = layers.Input(shape=(window, 1))
+
+
+    # ------------------------------
+    # Bidirectional LSTM
+    # ------------------------------
+
     x = layers.Bidirectional(
         layers.LSTM(
             units,
@@ -416,41 +951,118 @@ def build_meta_att_bilstm(trial, window):
             recurrent_regularizer=l2(l2_reg)
         )
     )(seq_in)
+
+
+    # ------------------------------
+    # Attention
+    # ------------------------------
+
     x = Attention()(x)
+
+
+    # ------------------------------
+    # Dense + Output
+    # ------------------------------
+
     x = layers.Dropout(dropout)(x)
-    x = layers.Dense(dense_units, activation="relu", kernel_regularizer=l2(l2_reg))(x)
-    out = layers.Dense(1, kernel_regularizer=l2(l2_reg))(x)
+
+    x = layers.Dense(
+        dense_units,
+        activation="relu",
+        kernel_regularizer=l2(l2_reg)
+    )(x)
+
+    out = layers.Dense(
+        1,
+        kernel_regularizer=l2(l2_reg)
+    )(x)
+
+
+    # ------------------------------
+    # Kompilierung
+    # ------------------------------
 
     m = Model(seq_in, out)
-    m.compile(optimizer=Adam(lr), loss="mse")
+
+    m.compile(
+        optimizer=Adam(lr),
+        loss="mse"
+    )
+
     return m, patience
 
+
+
+# ------------------------------------------------------
+# Optuna-Objective für META_ATT_BILSTM
+# ------------------------------------------------------
+
 def objective_meta_att_bilstm(trial, Xs, y, window):
+
     m, patience = build_meta_att_bilstm(trial, window)
+
     early_stopping = EarlyStopping(
         monitor='val_loss',
         patience=patience,
         restore_best_weights=True,
         verbose=0
     )
+
     history = m.fit(
-        Xs, y,
+        Xs,
+        y,
         epochs=META_MAX_EPOCHS,
         batch_size=32,
         validation_split=0.2,
         callbacks=[early_stopping],
         verbose=0
     )
-    trial.set_user_attr("effective_epochs", len(history.history['loss']))
+
+    trial.set_user_attr(
+        "effective_epochs",
+        len(history.history['loss'])
+    )
+
     pred = m.predict(Xs, verbose=0).flatten()
+
     return mean_absolute_error(y, pred)
 
 
 # ======================================================
-# RESIDUAL-LSTM = SAME STYLE AS META_LSTM 
-# Target residual = y_true - base_prediction 
+# RESIDUAL-LSTM = SAME STYLE AS META_LSTM
+# Target residual = y_true - base_prediction
 # ======================================================
+# Idee:
+# Bei Residual-Varianten wird zuerst ein Basis-Meta-Modell trainiert (z.B. META_ATT),
+# das die Fehlergröße direkt schätzt.
+#
+# Danach wird ein zweites Modell (Residual-LSTM) trainiert, das NICHT den Fehler selbst,
+# sondern das Residuum lernt:
+#
+#   residual_target = y_true - base_prediction
+#
+# Finale Vorhersage im Residual-Setup:
+#   final_pred = base_prediction + residual_prediction
+#
+# Wichtig:
+# Das Residual-Modell muss dieselbe Trainingslogik und denselben Stil wie META_LSTM haben,
+# damit der Vergleich fair bleibt (Optuna, EarlyStopping, Dropout, L2, etc.).
+# ======================================================
+
+
 def build_meta_residual_lstm(trial, window, prefix="resid_lstm"):
+    # ------------------------------------------------------
+    # Modell-Build-Funktion für das Residual-LSTM
+    # ------------------------------------------------------
+    # Diese Funktion entspricht stilistisch dem META_LSTM:
+    #   LSTM → Dropout → Dense(ReLU) → Dense(1)
+    #
+    # prefix:
+    # Damit Optuna-Parameter je Residual-Variante getrennt bleiben
+    # (z.B. resid_att_lstm_units vs resid_att_bilstm_lstm_units).
+    # ------------------------------------------------------
+
+    # Optuna Hyperparameter
     units = trial.suggest_int(f"{prefix}_units", 32, 128)
     dense_units = trial.suggest_int(f"{prefix}_dense", 16, 64)
     lr = trial.suggest_float(f"{prefix}_lr", 1e-4, 1e-2, log=True)
@@ -460,7 +1072,10 @@ def build_meta_residual_lstm(trial, window, prefix="resid_lstm"):
     recurrent_dropout = trial.suggest_float(f"{prefix}_recurrent_dropout", 0.0, 0.5)
     l2_reg = trial.suggest_float(f"{prefix}_l2_reg", 1e-6, 1e-2, log=True)
 
+    # Input: Sequenzfenster (window, 1)
     inp = layers.Input(shape=(window, 1))
+
+    # LSTM Encoder
     x = layers.LSTM(
         units,
         dropout=dropout,
@@ -468,22 +1083,46 @@ def build_meta_residual_lstm(trial, window, prefix="resid_lstm"):
         kernel_regularizer=l2(l2_reg),
         recurrent_regularizer=l2(l2_reg)
     )(inp)
+
+    # Regularisierung
     x = layers.Dropout(dropout)(x)
+
+    # Dense Head (wie META_LSTM)
     x = layers.Dense(dense_units, activation="relu", kernel_regularizer=l2(l2_reg))(x)
+
+    # Regressionsausgabe: Residuum-Schätzer
     out = layers.Dense(1, kernel_regularizer=l2(l2_reg))(x)
 
+    # Modell erstellen und kompilieren
     m = Model(inp, out)
     m.compile(optimizer=Adam(lr), loss="mse")
+
     return m, patience
 
+
 def objective_meta_residual_lstm(trial, Xs, resid_y, window, prefix="resid_lstm"):
+    # ------------------------------------------------------
+    # Optuna Objective für Residual-LSTM
+    # ------------------------------------------------------
+    # Trainiert das Residual-Modell auf resid_y und minimiert MAE.
+    #
+    # resid_y:
+    #   Zielwert ist NICHT der Fehler selbst,
+    #   sondern das Residuum (y_true - base_pred).
+    # ------------------------------------------------------
+
+    # Modell bauen
     m, patience = build_meta_residual_lstm(trial, window, prefix=prefix)
+
+    # EarlyStopping (gleiches Schema wie bei anderen Meta-Modellen)
     early_stopping = EarlyStopping(
         monitor='val_loss',
         patience=patience,
         restore_best_weights=True,
         verbose=0
     )
+
+    # Training
     history = m.fit(
         Xs, resid_y,
         epochs=META_MAX_EPOCHS,
@@ -492,56 +1131,118 @@ def objective_meta_residual_lstm(trial, Xs, resid_y, window, prefix="resid_lstm"
         callbacks=[early_stopping],
         verbose=0
     )
+
+    # Logging: effektive Epochenzahl für spätere Analyse/CSV
     trial.set_user_attr("effective_epochs", len(history.history['loss']))
+
+    # Vorhersage + Objective-Wert (MAE)
     pred = m.predict(Xs, verbose=0).flatten()
     return mean_absolute_error(resid_y, pred)
 
+
+
 # ==========================LOAD DATA============================
+# Zweck:
+# CSV laden, grundlegende Validierung durchführen und Daten so vorbereiten,
+# dass das restliche Skript reproduzierbar und stabil läuft.
+#
+# Erwartungen:
+# - Pflichtspalten: country, Date, tavg
+# - Weitere Feature-Spalten optional (werden automatisch genutzt, falls vorhanden)
+# ===============================================================
 
 print(">>> Loading:", DATA_PATH)
+
+# CSV laden
 df = pd.read_csv(DATA_PATH)
 
+# Länderbereinigung:
+# - Nur Zeilen mit gültigem country
+# - Trim whitespace
 df = df.dropna(subset=["country"])
 df["country"] = df["country"].astype(str).str.strip()
 df = df[df["country"] != ""].dropna()
 
+# Pflichtspalte Date prüfen
 if "Date" not in df.columns:
     raise RuntimeError("Column 'Date' is required in dataset.")
+
+# Date in datetime konvertieren + nach Datum sortieren
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values("Date").reset_index(drop=True)
 
+# Pflichtspalte target prüfen
 if "tavg" not in df.columns:
     raise RuntimeError("Column 'tavg' is required as target but not found in dataset.")
 
+
+# Feature-Liste:
+# Ziel ist ein robuster Default, der mit unterschiedlich vollständigen CSVs funktioniert.
 FEATURES = [
-    "tavg","tmin","tmax",
-    "Temp_Max","Temp_Mean","Temp_Min",
-    "wspd","wgust","Windspeed_Max","Windgusts_Max",
-    "sunshine","Sunshine_Duration",
-    "prcp","Precipitation_Sum"
+    "tavg", "tmin", "tmax",
+    "Temp_Max", "Temp_Mean", "Temp_Min",
+    "wspd", "wgust", "Windspeed_Max", "Windgusts_Max",
+    "sunshine", "Sunshine_Duration",
+    "prcp", "Precipitation_Sum"
 ]
+
+# Nur Features behalten, die tatsächlich in der CSV existieren
 FEATURES = [c for c in FEATURES if c in df.columns]
 
 print(">>> Using FEATURES:", FEATURES)
+
+# Länder-Liste extrahieren
 countries = df["country"].unique().tolist()
+
 print(f">>> Countries found: {len(countries)}")
 print(f">>> WINDOW fixed = {WINDOW}")
+
+
 
 # ======================================================
 # STORAGE / POOLS
 # ======================================================
+# Zweck:
+# Während STEP A (LSTM1 pro Land) werden Daten gesammelt,
+# die später für das globale Meta-Training (STEP C) benötigt werden.
+#
+# Gesammelt wird:
+# - Sequenzen (X_pool_seq): Fenster-Sequenzen (window, 1)
+# - Statistiken (X_pool_stat): feste Fenster-Features (mean/std/etc.), falls benötigt
+# - Targets pro Metrik (y_pool): true errors pro Fenster (sMAPE/MAE/MASE)
+# - Splits pro Land (splits): 75–90 und 90–100 windows pro Land für spätere Evaluation
+# - Baseline-Pool (global_true_errors_35_90): True Errors 35–90 für globale Baseline
+# ======================================================
+
+# Pool der Sequenzfenster für Meta-Training (über alle Länder)
 X_pool_seq = []
+
+# Pool statischer Fensterfeatures (wird nur für STAT-Modelle genutzt)
 X_pool_stat = []
+
+# Targets je Metrik (Fehlerwerte), gesammelt über alle Länder
 y_pool = {m: [] for m in META_METRICS}
+
+# Dictionary pro Land: enthält vorbereitete Split-Fenster für spätere Prediction/Evaluation
 splits = {}
+
+# True Errors (35–90) über alle Länder gepoolt:
+# wird später zur Berechnung der Global-Constant-Baseline genutzt
 global_true_errors_35_90 = {m: [] for m in META_METRICS}
 
+# Speichert Optuna Best-Rows der Meta-Modelle (für CSV-Export)
 optuna_rows_meta = []
+
+# Speichert Optuna Best-Configs der LSTM1 Modelle pro Land
 lstm1_best_rows = []
 
+# Optional: Daten zum Plotten einiger LSTM1 Forecasts (Debug/Visualisierung)
 plot_lstm1 = []
+
+# Optional: Platzhalter für Debug (falls du später History für erstes Land speichern willst)
 first_lstm1_history = None
 first_lstm1_country = None
+
 # ===========================STEP A: TRAIN LSTM1 PER COUNTRY + COLLECT TRUE ERRORS===========================
 
 print(f"\n=== STEP A: LSTM1 PER COUNTRY + TRUE ERRORS (Parallel - Max Workers: {MAX_WORKERS}) ===")
@@ -1100,5 +1801,6 @@ except Exception as e:
 print(f"\n=== ALL DONE ✓ V13 (LSTM1 + 6 Meta Models, WINDOW fixed) ===")
 print(f"=== Parallel processing: {MAX_WORKERS} countries/models at a time ===")
 print(f"=== Total countries processed: {len(splits)} ===")
+
 
 
