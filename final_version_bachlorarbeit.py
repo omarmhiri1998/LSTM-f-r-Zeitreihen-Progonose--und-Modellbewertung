@@ -194,7 +194,7 @@ def select_best_pareto_trial(study):
 
 
 # ======================================================
-# LSTM1 (per country) - مع Early Stopping
+# LSTM1 (per country) -  Early Stopping
 # ======================================================
 def build_lstm1(trial, window, input_dim):
     units = trial.suggest_int("units_l1", 32, 128)
@@ -210,11 +210,7 @@ def build_lstm1(trial, window, input_dim):
     return model, patience
 
 def objective_lstm1(trial, X, y, window):
-    """
-    PARETO objective (2 أهداف):
-    - MAE على جزء validation
-    - MSE على جزء validation
-    """
+    
     m, patience = build_lstm1(trial, window, X.shape[2])
 
     n = len(X)
@@ -252,7 +248,7 @@ def objective_lstm1(trial, X, y, window):
 
 
 # ======================================================
-# META MODELS (base architectures) - مع Early Stopping
+# META MODELS (base architectures) - Early Stopping
 # ======================================================
 # 1) META LSTM (seq)
 def build_meta_lstm(trial, window):
@@ -1143,3 +1139,4 @@ except Exception as e:
     print("[warn] Could not save plots:", str(e))
 
 print("\n=== ALL DONE ✓ V13 (LSTM1 PARETO + 5 Meta Models: LSTM, ATT, ATT-BiLSTM, LSTM+STAT, ATT-BiLSTM+RESID) ===")
+
