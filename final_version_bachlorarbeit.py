@@ -1,30 +1,17 @@
 # -*- coding: utf-8 -*-
+
 """
-full_pipeline_v13_all_combinations_fixed46_bilstm_residual_lstm.py
-Omar Mhiri (modified)
+Models implemented in this pipeline:
 
-V13 FULL PIPELINE (MODIFIED) — META MODELS ONLY:
-1) META LSTM (seq)
-2) META ATT (seq + attention)
-3) META ATT-BiLSTM (seq + attention + bidirectional)
+- LSTM1 (per country forecast model)
 
-ADDED (as requested, NO other changes):
-4) META LSTM+STAT (seq + static window stats)
-5) META ATT + RESIDUAL (base ATT + residual model)
-6) META ATT-BiLSTM + RESIDUAL (base ATT-BiLSTM + residual model)
-
-OTHER:
-- LSTM1 per country (train on 0–35 windows) with Optuna per country
-- True errors per window computed from LSTM1: sMAPE, MAE, MASE
-- Meta models trained globally on pooled 35–75 windows (across all countries)
-- Supervisor Global Constant Baseline per metric = mean(TRUE errors on 35–90 pooled across ALL countries)
-- Evaluation on 90–100 pooled across all countries:
-  MAE  / Spearman / SkillScore(MAE) vs global constant baseline
-- Export full timeseries (75–100) per country per metric with all model predictions
-
-Window size is FIXED: 46 (as requested, no Differential Evolution)
-Outputs written into:
-OUT_DIR = "plots_v13_all_models_fixed46_bilstm_residlstm"
+Meta-Models:
+- META_LSTM
+- META_LSTM_STAT
+- META_ATT
+- META_ATT_BILSTM
+- META_ATT_RESID
+- META_ATT_BILSTM_RESID
 """
 
 # ======================================================
@@ -1113,3 +1100,4 @@ except Exception as e:
 print(f"\n=== ALL DONE ✓ V13 (LSTM1 + 6 Meta Models, WINDOW fixed) ===")
 print(f"=== Parallel processing: {MAX_WORKERS} countries/models at a time ===")
 print(f"=== Total countries processed: {len(splits)} ===")
+
