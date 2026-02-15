@@ -1,3 +1,68 @@
+## Projektidee
+
+Dieses Projekt implementiert eine zweistufige Deep-Learning-Pipeline zur Bewertung der Prognosestabilität.
+
+In der ersten Stufe wird für jedes Land ein LSTM-Prognosemodell (**LSTM1**) trainiert, das zukünftige Werte der Zielvariable vorhersagt.
+
+In der zweiten Stufe werden globale Meta-Modelle trainiert, die nicht die Zielvariable selbst, sondern die zu erwartende Prognosefehlerhöhe  
+(**sMAPE, MAE, MASE**) pro historischem Eingabefenster schätzen.
+
+Die Meta-Modelle basieren ausschließlich auf vergangenen Daten und haben keinen Zugriff auf zukünftige Beobachtungen.
+
+Ziel ist es, die Zuverlässigkeit eines Prognosemodells pro Zeitfenster quantitativ zu bewerten.
+
+---
+
+## Voraussetzungen
+
+### Python-Version
+
+- Python 3.10 oder höher
+
+---
+
+### Benötigte Python-Pakete
+
+Installation über:
+
+```bash
+pip install numpy pandas scikit-learn scipy optuna tensorflow matplotlib
+```
+
+---
+
+### GPU-Unterstützung (optional, empfohlen)
+
+Für schnellere Trainingszeiten:
+
+- NVIDIA GPU
+- CUDA / cuDNN kompatibel zur verwendeten TensorFlow-Version
+
+---
+
+## Anforderungen an die Daten (CSV)
+
+Das Skript erwartet eine CSV-Datei mit mindestens folgenden Spalten:
+
+### Pflichtspalten
+
+| Spalte   | Beschreibung | Datentyp |
+|----------|-------------|----------|
+| `country` | Ländername | String |
+| `Date`    | Datum (wird in datetime konvertiert) | Date |
+| `tavg`    | Zielvariable | Float |
+
+---
+
+### Optionale Feature-Spalten  
+(werden automatisch verwendet, falls vorhanden)
+
+- `tmin`, `tmax`
+- `Temp_Max`, `Temp_Mean`, `Temp_Min`
+- `wspd`, `wgust`, `Windspeed_Max`, `Windgusts_Max`
+- `sunshine`, `Sunshine_Duration`
+- `prcp`, `Precipitation_Sum`
+
 ## Code-Struktur (Abschnitte im Skript)
 
 Das Skript ist bewusst in klar markierte Blöcke gegliedert:
