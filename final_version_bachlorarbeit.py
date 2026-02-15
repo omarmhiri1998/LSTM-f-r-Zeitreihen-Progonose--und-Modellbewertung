@@ -58,7 +58,7 @@ P90 = 0.90
 META_METRICS = ["sMAPE", "MAE", "MASE"]
 
 # Budgets
-N_TRIALS_L1 = 8
+N_TRIALS_L1 = 20
 L1_MAX_EPOCHS = 50
 
 N_TRIALS_META = 20
@@ -1139,4 +1139,5 @@ except Exception as e:
     print("[warn] Could not save plots:", str(e))
 
 print("\n=== ALL DONE ✓ V13 (LSTM1 PARETO + 5 Meta Models: LSTM, ATT, ATT-BiLSTM, LSTM+STAT, ATT-BiLSTM+RESID) ===")
+
 
