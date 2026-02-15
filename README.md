@@ -9,7 +9,7 @@ In der zweiten Stufe werden globale Meta-Modelle trainiert, die nicht die Zielva
 
 Die Meta-Modelle basieren ausschließlich auf vergangenen Daten und haben keinen Zugriff auf zukünftige Beobachtungen.
 
-Ziel ist es, die Zuverlässigkeit eines Prognosemodells pro Zeitfenster quaسيntitativ zu bewerten.
+Ziel ist es, die Zuverlässigkeit eines Prognosemodells pro Zeitfenster quantitativ zu bewerten.
 In diese arbeit wurde eine bestimmte Datenbank verwendet.
 
 ---
