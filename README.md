@@ -2,9 +2,9 @@
 
 Das Skript ist bewusst in klar markierte Blöcke gegliedert:
 
-- `# ======================================================`
+- `# ========================`
   `# IMPORTS`
-  `# ======================================================`  
+  `# ===============================`  
   Importiert alle benötigten Bibliotheken (NumPy, Pandas, TensorFlow/Keras, Optuna, Scikit-Learn, SciPy).
 
 - `# ======================================================`
