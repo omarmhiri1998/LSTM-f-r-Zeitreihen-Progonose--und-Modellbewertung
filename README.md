@@ -240,3 +240,25 @@ Erzeugte Dateien (Auszug):
 Die Pipeline trainiert zunächst LSTM1 pro Land (mit Pareto-Optuna) und berechnet daraus echte Fehler pro Fenster.
 Darauf werden globale Meta-Modelle trainiert, die die erwarteten Fehler (sMAPE/MAE/MASE) für neue historische Fenster schätzen.
 Die Bewertung erfolgt strikt im 90–100%-Segment und wird gegen eine globale konstante Baseline verglichen.
+
+---
+## Als Versuch, den Code auf mehr als einer Datenbank lauffähig zu machen
+
+Falls eine eigene Datenbank, eine individuelle Fensterlänge oder ein alternatives Zielattribut verwendet werden soll, kann die Datei `final_version_bachelorarbeit_flexible_target.py` verwendet werden. Dieses Skript ermöglicht eine strukturierte und reproduzierbare Anpassung an unterschiedliche Datensätze und Anwendungskontexte.
+
+Nach dem Laden einer CSV-Datei wird zunächst ein Gruppierungsattribut (`GROUP_COL`) definiert, beispielsweise `country`, `city`, `company`, `client`, `region` oder eine vergleichbare Kategorie. Dieses Attribut dient ausschließlich zur Trennung der einzelnen Zeitreihen und darf keine fehlenden Werte enthalten.
+
+Im nächsten Schritt wird das Zielattribut (`TARGET_COL`) festgelegt, auf dessen Basis die Prognose erfolgt. Alle weiteren geeigneten numerischen Spalten werden automatisch als Eingangsmerkmale (Features) berücksichtigt. Dabei werden ausschließlich numerische Variablen einbezogen, die inhaltlich relevant sind. Numerische Identifikatoren (z. B. ID-Spalten, laufende Indizes oder kodierte Kennnummern ohne prognostische Bedeutung) werden explizit ausgeschlossen, um Verzerrungen oder künstlich erhöhte Modellgüte zu vermeiden.
+
+Intern wird das Zielattribut konsistent an erster Stelle der Eingabematrix positioniert, sodass eine stabile Struktur der Sliding-Window-Repräsentation gewährleistet ist. Die Fensterlänge (`WINDOW`) kann flexibel definiert werden und beeinflusst direkt die minimale erforderliche Anzahl an Beobachtungen pro Gruppe.
+
+Für die korrekte Anwendung müssen folgende Voraussetzungen erfüllt sein:
+
+- Die Datei muss eine Datumsvariable (im Code: `Date`) enthalten, die eine eindeutige chronologische Sortierung erlaubt.
+- Das Gruppierungsattribut darf keine fehlenden oder leeren Werte enthalten.
+- Jede Gruppe muss ausreichend viele Beobachtungen besitzen, sodass nach Bildung der Sliding Windows genügend Trainings-, Validierungs- und Testfenster generiert werden können. Die Mindestanzahl hängt direkt von der gewählten Fensterlänge (`WINDOW`) ab.
+- Das Zielattribut muss numerisch sein.
+- Alle verwendeten Features müssen numerisch, zeitlich konsistent und frei von Datenlecks sein (keine aus dem Zielwert abgeleiteten oder zukünftigen Informationen).
+
+Sind diese Bedingungen erfüllt, kann die gesamte Modellpipeline ohne strukturelle Anpassungen auf neue Datensätze übertragen werden.
+
